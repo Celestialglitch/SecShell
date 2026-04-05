@@ -11,7 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <signal.h>
+#include <time.h>
 
 #define MAX_CMD_LEN 1024
 #define MAX_ARGS    64
@@ -51,6 +51,31 @@ static SecurityPolicy get_policy(const char *cmd)
         if (strcmp(cmd, policy_db[i].cmd) == 0)
             return policy_db[i].policy;
     return POLICY_UNRESTRICTED;
+}
+
+/* audit log — append one line per command execution */
+static void log_audit(const char *cmd, SecurityPolicy policy,
+                      int allowed, const char *reason)
+{
+    FILE *f = fopen("secshell_audit.log", "a");
+    if (!f) return;
+    time_t now = time(NULL);
+    char  *ts  = ctime(&now);
+    ts[strlen(ts) - 1] = '\0';
+    fprintf(f, "[%s] CMD=%s POLICY=%d ALLOWED=%d REASON=%s\n",
+            ts, cmd, (int)policy, allowed, reason);
+    fclose(f);
+}
+
+/* nanosecond-precision overhead tracking */
+typedef struct { struct timespec start, end; long overhead_ns; } PerfMetrics;
+
+static void perf_start(PerfMetrics *m) { clock_gettime(CLOCK_MONOTONIC, &m->start); }
+static void perf_end(PerfMetrics *m)
+{
+    clock_gettime(CLOCK_MONOTONIC, &m->end);
+    m->overhead_ns = (m->end.tv_sec  - m->start.tv_sec)  * 1000000000L
+                   + (m->end.tv_nsec - m->start.tv_nsec);
 }
 
 static void parse_args(char *cmd, char **args)
