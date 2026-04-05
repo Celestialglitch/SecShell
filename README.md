@@ -217,7 +217,7 @@ SecShell differs in applying kernel-enforced filtering interactively at the shel
 
 ## Author
 
-Third-year CSE undergraduate, NIT Agartala
+Third-year CSE undergraduate, NIT Agartala  
 BS Electronic Systems, IIT Madras
 
 [GitHub](https://github.com/Celestialglitch) · [LinkedIn](#)
