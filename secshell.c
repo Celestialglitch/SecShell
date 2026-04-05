@@ -1,9 +1,20 @@
 /*
- * secshell.c — stage 2: security policy classification
+ * secshell.c — security-enhanced Unix shell
  *
- * Introduces the idea that not all commands need the same
- * privileges. Classifies commands into four tiers before
- * any kernel enforcement is added.
+ * Enforces the principle of least privilege at the shell level.
+ * Each command runs in a child process whose syscall surface is
+ * restricted by a seccomp-bpf filter installed before execvp().
+ * The kernel enforces the filter; there is no userspace bypass.
+ *
+ * Policies:
+ *   READONLY    — read-only file access  (cat, ls, grep …)
+ *   WRITEONLY   — file I/O, no network   (cp, mv, echo …)
+ *   NETWORK     — network + file I/O     (curl, wget, ssh …)
+ *   DANGEROUS   — requires confirmation  (rm, chmod, dd …)
+ *   UNRESTRICTED— unknown commands, logged but not filtered
+ *
+ * Author : [Your Name] — NIT Agartala / IIT Madras
+ * License: MIT
  */
 
 #include <stdio.h>
