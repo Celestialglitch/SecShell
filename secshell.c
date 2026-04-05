@@ -12,6 +12,10 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <sys/prctl.h>
+#include <linux/seccomp.h>
+#include <linux/filter.h>
+#include <asm/unistd.h>
 
 #define MAX_CMD_LEN 1024
 #define MAX_ARGS    64
@@ -76,6 +80,130 @@ static void perf_end(PerfMetrics *m)
     clock_gettime(CLOCK_MONOTONIC, &m->end);
     m->overhead_ns = (m->end.tv_sec  - m->start.tv_sec)  * 1000000000L
                    + (m->end.tv_nsec - m->start.tv_nsec);
+}
+
+/* ------------------------------------------------------------------ */
+/* seccomp-bpf filters                                                  */
+/* ------------------------------------------------------------------ */
+
+#define LOAD_SYSCALL_NR \
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, \
+             (offsetof(struct seccomp_data, nr)))
+#define ALLOW_SYSCALL(nr) \
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (nr), 0, 1), \
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)
+#define KILL_PROCESS \
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL)
+#define ALLOW_ALL \
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)
+
+static void install_filter(struct sock_filter *f, unsigned short len)
+{
+    struct sock_fprog prog = { .len = len, .filter = f };
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
+        { perror("prctl(NO_NEW_PRIVS)"); exit(EXIT_FAILURE); }
+    if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) < 0)
+        { perror("prctl(SECCOMP)"); exit(EXIT_FAILURE); }
+}
+
+/*
+ * READONLY allowlist — tightest policy.
+ * Note: write() is allowed so programs can produce output.
+ * Classic BPF cannot inspect fd arguments, so we cannot restrict
+ * write() to stdout/stderr only. That requires stateful eBPF.
+ */
+static void install_readonly_filter(void)
+{
+    struct sock_filter f[] = {
+        LOAD_SYSCALL_NR,
+        ALLOW_SYSCALL(__NR_read),
+        ALLOW_SYSCALL(__NR_write),
+        ALLOW_SYSCALL(__NR_open),
+        ALLOW_SYSCALL(__NR_openat),
+        ALLOW_SYSCALL(__NR_close),
+        ALLOW_SYSCALL(__NR_fstat),
+        ALLOW_SYSCALL(__NR_newfstatat),
+        ALLOW_SYSCALL(__NR_lseek),
+        ALLOW_SYSCALL(__NR_mmap),
+        ALLOW_SYSCALL(__NR_munmap),
+        ALLOW_SYSCALL(__NR_brk),
+        ALLOW_SYSCALL(__NR_exit),
+        ALLOW_SYSCALL(__NR_exit_group),
+        KILL_PROCESS
+    };
+    install_filter(f, (unsigned short)(sizeof f / sizeof f[0]));
+}
+
+/* WRITEONLY — extends READONLY with file-creation syscalls */
+static void install_writeonly_filter(void)
+{
+    struct sock_filter f[] = {
+        LOAD_SYSCALL_NR,
+        ALLOW_SYSCALL(__NR_read),   ALLOW_SYSCALL(__NR_write),
+        ALLOW_SYSCALL(__NR_open),   ALLOW_SYSCALL(__NR_openat),
+        ALLOW_SYSCALL(__NR_close),  ALLOW_SYSCALL(__NR_creat),
+        ALLOW_SYSCALL(__NR_mkdir),  ALLOW_SYSCALL(__NR_rename),
+        ALLOW_SYSCALL(__NR_unlink), ALLOW_SYSCALL(__NR_stat),
+        ALLOW_SYSCALL(__NR_fstat),  ALLOW_SYSCALL(__NR_lstat),
+        ALLOW_SYSCALL(__NR_newfstatat),
+        ALLOW_SYSCALL(__NR_mmap),   ALLOW_SYSCALL(__NR_munmap),
+        ALLOW_SYSCALL(__NR_brk),    ALLOW_SYSCALL(__NR_exit),
+        ALLOW_SYSCALL(__NR_exit_group),
+        KILL_PROCESS
+    };
+    install_filter(f, (unsigned short)(sizeof f / sizeof f[0]));
+}
+
+/*
+ * NETWORK — denylist approach.
+ * Allows network and file I/O but blocks execve/fork/clone
+ * so the process cannot spawn children or replace itself.
+ */
+static void install_network_filter(void)
+{
+    struct sock_filter f[] = {
+        LOAD_SYSCALL_NR,
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, __NR_execve, 0, 1), KILL_PROCESS,
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, __NR_clone,  0, 1), KILL_PROCESS,
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K, __NR_fork,   0, 1), KILL_PROCESS,
+        ALLOW_ALL
+    };
+    install_filter(f, (unsigned short)(sizeof f / sizeof f[0]));
+}
+
+static void apply_policy(const char *cmd)
+{
+    SecurityPolicy p = get_policy(cmd);
+    switch (p) {
+    case POLICY_READONLY:
+        printf("[SecShell] policy=READONLY  cmd=%s\n", cmd);
+        install_readonly_filter();
+        break;
+    case POLICY_WRITEONLY:
+        printf("[SecShell] policy=WRITEONLY cmd=%s\n", cmd);
+        install_writeonly_filter();
+        break;
+    case POLICY_NETWORK:
+        printf("[SecShell] policy=NETWORK   cmd=%s\n", cmd);
+        install_network_filter();
+        log_audit(cmd, p, 1, "network access permitted");
+        break;
+    case POLICY_DANGEROUS:
+        fprintf(stderr, "[SecShell] WARNING: '%s' is destructive. Type 'yes' to proceed: ", cmd);
+        fflush(stderr);
+        { char buf[8];
+          if (!fgets(buf, sizeof buf, stdin) || strncmp(buf, "yes", 3) != 0) {
+              printf("[SecShell] Aborted.\n");
+              log_audit(cmd, p, 0, "user denied");
+              exit(EXIT_SUCCESS);
+          }
+        }
+        log_audit(cmd, p, 1, "user confirmed");
+        break;
+    case POLICY_UNRESTRICTED:
+        log_audit(cmd, p, 1, "unrestricted");
+        break;
+    }
 }
 
 static void parse_args(char *cmd, char **args)
