@@ -1,0 +1,6 @@
+secshell
+secshell_audit.log
+*.o
+.kiro/
+.vscode/
+research/
