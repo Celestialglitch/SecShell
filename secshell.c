@@ -1,9 +1,9 @@
 /*
- * secshell.c — stage 1: basic shell loop
+ * secshell.c — stage 2: security policy classification
  *
- * fork/exec loop, argument parsing, built-in cd/exit,
- * and SIGINT protection. Starting point before adding
- * any security layer.
+ * Introduces the idea that not all commands need the same
+ * privileges. Classifies commands into four tiers before
+ * any kernel enforcement is added.
  */
 
 #include <stdio.h>
@@ -15,6 +15,43 @@
 
 #define MAX_CMD_LEN 1024
 #define MAX_ARGS    64
+
+typedef enum {
+    POLICY_UNRESTRICTED,
+    POLICY_READONLY,
+    POLICY_WRITEONLY,
+    POLICY_NETWORK,
+    POLICY_DANGEROUS
+} SecurityPolicy;
+
+typedef struct {
+    const char    *cmd;
+    SecurityPolicy policy;
+} CommandPolicy;
+
+static const CommandPolicy policy_db[] = {
+    { "cat",   POLICY_READONLY  }, { "ls",    POLICY_READONLY  },
+    { "grep",  POLICY_READONLY  }, { "head",  POLICY_READONLY  },
+    { "tail",  POLICY_READONLY  }, { "less",  POLICY_READONLY  },
+    { "more",  POLICY_READONLY  }, { "find",  POLICY_READONLY  },
+    { "echo",  POLICY_WRITEONLY }, { "cp",    POLICY_WRITEONLY },
+    { "mv",    POLICY_WRITEONLY }, { "touch", POLICY_WRITEONLY },
+    { "mkdir", POLICY_WRITEONLY },
+    { "curl",  POLICY_NETWORK   }, { "wget",  POLICY_NETWORK   },
+    { "ping",  POLICY_NETWORK   }, { "ssh",   POLICY_NETWORK   },
+    { "rm",    POLICY_DANGEROUS }, { "chmod", POLICY_DANGEROUS },
+    { "chown", POLICY_DANGEROUS }, { "dd",    POLICY_DANGEROUS },
+    { "mkfs",  POLICY_DANGEROUS },
+    { NULL,    POLICY_UNRESTRICTED }
+};
+
+static SecurityPolicy get_policy(const char *cmd)
+{
+    for (int i = 0; policy_db[i].cmd != NULL; i++)
+        if (strcmp(cmd, policy_db[i].cmd) == 0)
+            return policy_db[i].policy;
+    return POLICY_UNRESTRICTED;
+}
 
 static void parse_args(char *cmd, char **args)
 {
