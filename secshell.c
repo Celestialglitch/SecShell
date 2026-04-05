@@ -223,14 +223,17 @@ static void sigint_handler(int sig)
 
 int main(void)
 {
-    char  input[MAX_CMD_LEN];
-    char *args[MAX_ARGS];
-    pid_t pid;
-    int   status;
+    char       input[MAX_CMD_LEN];
+    char      *args[MAX_ARGS];
+    pid_t      pid;
+    int        status;
+    PerfMetrics metrics = {0};
 
     struct sigaction sa = { .sa_handler = sigint_handler };
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
+
+    printf("SecShell — security-enhanced shell  (type 'help' for policies)\n\n");
 
     while (1) {
         printf("secshell> ");
@@ -258,17 +261,51 @@ int main(void)
             continue;
         }
 
+        if (strcmp(args[0], "help") == 0) {
+            printf("Policies:\n"
+                   "  READONLY    : cat ls grep head tail less more find\n"
+                   "  WRITEONLY   : echo cp mv touch mkdir\n"
+                   "  NETWORK     : curl wget ping ssh\n"
+                   "  DANGEROUS   : rm chmod chown dd mkfs  (confirmation required)\n"
+                   "  UNRESTRICTED: all other commands (logged, not filtered)\n"
+                   "Audit log   : secshell_audit.log\n");
+            continue;
+        }
+
+        if (strcmp(args[0], "stats") == 0) {
+            if (metrics.overhead_ns == 0)
+                printf("No commands run yet.\n");
+            else
+                printf("Last command overhead: %ld ns (%.3f ms)\n",
+                       metrics.overhead_ns, metrics.overhead_ns / 1e6);
+            continue;
+        }
+
+        perf_start(&metrics);
+
         pid = fork();
         if (pid < 0) { perror("fork"); continue; }
 
         if (pid == 0) {
+            apply_policy(args[0]);
             execvp(args[0], args);
             perror(args[0]);
             exit(EXIT_FAILURE);
         }
 
         waitpid(pid, &status, 0);
+        perf_end(&metrics);
+
+        if (WIFSIGNALED(status) && WTERMSIG(status) == SIGSYS) {
+            fprintf(stderr, "[SecShell] blocked: forbidden syscall by '%s'\n", args[0]);
+            log_audit(args[0], get_policy(args[0]), 0, "seccomp violation");
+        } else {
+            log_audit(args[0], get_policy(args[0]),
+                      WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 1 : 0,
+                      "exited");
+        }
     }
 
+    printf("\nSecShell exited.  Audit log: secshell_audit.log\n");
     return 0;
 }
