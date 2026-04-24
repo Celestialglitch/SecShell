@@ -226,4 +226,4 @@ Department Of Computer Science and Engineering, NIT Agartala
 
 ## License
 
-MIT — see (LICENSE)
+MIT
