@@ -16,7 +16,7 @@ When you type `cat file.txt`, the `cat` process can:
 - Overwrite any file you own
 - Call `setuid` to attempt privilege escalation
 
-It just doesn't. But it _could_. And if that binary is ever compromised — supply-chain attack, path hijack, malicious package — it _will_.
+It simply doesn’t use them under normal conditions. However, if the binary is ever compromised through a supply-chain attack, path hijacking, or a malicious dependency , those capabilities can be misused.
 
 This is a direct violation of the **principle of least privilege** which says, every process should operate with the minimum rights it needs to do its job, and nothing more.
 
