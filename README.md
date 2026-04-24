@@ -7,7 +7,7 @@ using Linux `seccomp-bpf` to sandbox every command it executes.
 
 ## The Problem
 
-Every shell you have ever used — bash, zsh, fish — runs commands with your full user privileges.
+Every shell you have ever used like bash, zsh, fish runs commands with your full user privileges.
 
 When you type `cat file.txt`, the `cat` process can:
 
@@ -18,7 +18,7 @@ When you type `cat file.txt`, the `cat` process can:
 
 It just doesn't. But it _could_. And if that binary is ever compromised — supply-chain attack, path hijack, malicious package — it _will_.
 
-This is a direct violation of the **principle of least privilege**: every process should operate with the minimum rights it needs to do its job, and nothing more.
+This is a direct violation of the **principle of least privilege** which says, every process should operate with the minimum rights it needs to do its job, and nothing more.
 
 **SecShell enforces this.**
 
@@ -26,7 +26,7 @@ This is a direct violation of the **principle of least privilege**: every proces
 
 ## How It Works
 
-SecShell classifies every command into a security policy before executing it. Using the Linux kernel's `seccomp-bpf` mechanism, it installs a syscall allowlist in the child process _after_ `fork()` but _before_ `execvp()`. The kernel enforces this filter at the syscall boundary — there is no userspace bypass.
+SecShell classifies every command into a security policy before executing it. Using the Linux kernel's `seccomp-bpf` mechanism, it installs a syscall allowlist in the child process _after_ `fork()` but _before_ `execvp()`. The kernel enforces this filter at the syscall boundary which ensures there is no userspace bypass.
 
 ```
 User types: cat /etc/passwd
@@ -97,7 +97,7 @@ write(sock, buf, strlen(buf));
 
 ### seccomp-bpf
 
-`seccomp` (Secure Computing Mode) is a Linux kernel feature for syscall filtering. The BPF variant allows a program to install a filter — a small bytecode program — that the kernel runs on every syscall before dispatching it.
+`seccomp` (Secure Computing Mode) is a Linux kernel feature for syscall filtering. The BPF variant allows a program to install a filter, a small bytecode program that the kernel runs on every syscall before dispatching it.
 
 ```c
 struct sock_filter filter[] = {
@@ -226,4 +226,4 @@ Department Of Computer Science and Engineering, NIT Agartala
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT — see (LICENSE)
